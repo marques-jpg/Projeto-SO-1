@@ -1,6 +1,7 @@
 #ifndef BOARD_H
 #define BOARD_H
 
+
 #define MAX_MOVES 20
 #define MAX_LEVELS 20
 #define MAX_FILENAME 256
