@@ -4,6 +4,10 @@
 #include <time.h>
 #include <unistd.h>
 #include <stdarg.h>
+#include <fcntl.h>  // Para open, O_RDONLY
+#include <ctype.h>  // Para isspace, isdigit
+#include <string.h> // Para strcmp
+
 
 FILE * debugfile;
 
@@ -342,6 +346,8 @@ int load_pacman(board_t* board, int points) {
     return 0;
 }
 
+
+
 // Static Loading
 int load_ghost(board_t* board) {
     // Ghost 0
@@ -410,6 +416,175 @@ int load_level(board_t *board, int points) {
 
     return 0;
 }
+
+char* read_file_content(const char* filename) {
+    int fd = open(filename, O_RDONLY);
+    if (fd < 0) {
+        perror("Erro ao abrir ficheiro"); 
+        return NULL; 
+    }
+    char *buffer = malloc(4096); 
+    if (!buffer) { close(fd); return NULL; }
+
+    int bytes_lidos = read(fd, buffer, 4095);
+    if (bytes_lidos <= 0) { 
+        free(buffer); 
+        close(fd); 
+        return NULL; 
+    }
+
+    buffer[bytes_lidos] = '\0';
+    close(fd); 
+    return buffer;
+}
+
+int load_pacman_filename(board_t *board, const char* filename, int index){
+    char *buffer = read_file_content(filename);
+    if (!buffer) return 1;
+
+    char *saveptr; 
+    char *linha = strtok_r(buffer, "\n", &saveptr);
+    
+    pacman_t *p = &board->pacmans[index];
+    p->alive = 1; 
+    p->points = 0;
+
+    while(linha != NULL){
+        if(linha[0] != "#"){
+            if(strncmp(linha, "PASSO", 5) == 0){
+                int passo;
+                if(sscanf(linha, "PASSO %d", &passo) == 1){
+                    p->passo = passo;
+                    p->waiting = passo;
+                }
+            }
+            else if (strncmp(linha, "POS", 3) == 0){
+                int x, y;
+                if(sscanf(linha, "POS %d %d", &y, &x) == 2){
+                    p->pos_x = x;
+                    p->pos_y = y;
+                    board->board[y * board->width + x].content = "P"; //fazer função para verificar se a possição existe e se é valida
+                }
+            }
+            else if(linha[0] == 'A'){
+    
+            }
+            else if(linha[0] == 'D'){
+
+            }
+            else if(linha[0] == 'W'){
+
+            }
+            else if(linha[0] == 'S'){
+
+            }
+            else if(linha[0] == 'T'){
+
+            }
+            else{
+
+            }
+        }
+        linha = strtok_r(NULL, "\n", &saveptr);
+    }
+    free(buffer);
+    return 0;
+}
+
+
+void processar_entidades(board_t *board, char *linha, int tipo) {
+    char temp_name[50];
+    int offset = 0;
+    int count = 0;
+    char *cursor = linha + 3; 
+
+    while (sscanf(cursor, "%s%n", temp_name, &offset) == 1) {
+        count++;
+        cursor += offset;
+    }
+    if (tipo == 0) {
+        board->n_pacmans = count;
+        board->pacmans = calloc(count, sizeof(pacman_t));
+    } else {
+        board->n_ghosts = count;
+        board->ghosts = calloc(count, sizeof(ghost_t));
+    }
+
+    cursor = linha + 3;
+    int i = 0;
+    
+    while (sscanf(cursor, "%s%n", temp_name, &offset) == 1) {
+        
+        if (tipo == 0) {
+            load_pacman_filename(board, temp_name, i); 
+        } else {
+            load_ghost_filename(board, temp_name, i);
+        }
+        
+        cursor += offset;
+        i++;
+    }
+}
+
+int load_level_filename(board_t *board, const char *filename) {
+    char *buffer = read_file_content(filename);
+    if (!buffer) return 1;
+
+    char *saveptr;
+    char *linha = strtok_r(buffer, "\n", &saveptr);
+
+    int current_row = 0; 
+
+    while (linha != NULL) {
+        
+        if (linha[0] != '#') {
+            
+            if (strncmp(linha, "DIM", 3) == 0) {
+                int h, w;
+                if (sscanf(linha, "DIM %d %d", &h, &w) == 2) {
+                    board->height = h;
+                    board->width = w;
+                    board->board = calloc(board->width * board->height, sizeof(board_pos_t));
+                }
+            } 
+            else if (strncmp(linha, "TEMPO", 5) == 0) {
+                int t;
+                if (sscanf(linha, "TEMPO %d", &t) == 1) {board->tempo = t; }}
+
+            else if(strncmp(linha, "PAC", 3) == 0){processar_entidades(board, linha, 0);}
+
+            else if (strncmp(linha, "MON", 3) == 0) {processar_entidades(board, linha, 1);}
+
+            else {
+                if (board->board != NULL && current_row < board->height) {
+                    
+                    for (int x = 0; x < board->width && linha[x] != '\0'; x++) {
+                        
+                        int index = (current_row * board->width) + x;
+                        char char_lido = linha[x];
+                        
+                        if (char_lido == 'X') {
+                            board->board[index].content = 'W'; 
+                        } 
+                        else if (char_lido == '@') {
+                            board->board[index].content = ' ';
+                            board->board[index].has_portal = 1;
+                        } 
+                        else{
+                            board->board[index].content = ' '; 
+                            board->board[index].has_dot = 1;
+                        }
+                    }
+                    current_row++; 
+                }
+            }
+        }
+        linha = strtok_r(NULL, "\n", &saveptr);
+    }
+    free(buffer);
+    return 0;
+}
+   
 
 void unload_level(board_t * board) {
     free(board->board);
