@@ -478,7 +478,6 @@ int parse_move_line(char *linha, command_t *moves_array, int *n_moves) {
         }
     } 
     else {
-
         cmd = linha[0];
     }
 
