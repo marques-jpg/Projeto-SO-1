@@ -1,7 +1,6 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-
 #define MAX_MOVES 20
 #define MAX_LEVELS 20
 #define MAX_FILENAME 256
@@ -78,8 +77,11 @@ int load_pacman(board_t* board, int points);
 /*Adds a ghost(monster) to the board*/
 int load_ghost(board_t* board);
 
-/*Loads a level into board*/
+/*Loads a level into board (Old static version)*/
 int load_level(board_t* board, int accumulated_points);
+
+/*Loads a level from a file (New dynamic version)*/
+int load_level_filename(board_t *board, const char *filename, int accumulated_points);
 
 /*Unloads levels loaded by load_level*/
 void unload_level(board_t * board);
