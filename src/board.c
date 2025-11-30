@@ -465,7 +465,7 @@ int is_valid_pos(board_t *board, int x, int y) {
 
 // Em src/board.c
 
-int load_pacman_filename(board_t *board, const char* filename, int index){
+int load_pacman_filename(board_t *board, const char* filename, int index, int points){
     // Tenta ler o ficheiro
     char *buffer = read_file_content(filename);
 
@@ -476,7 +476,7 @@ int load_pacman_filename(board_t *board, const char* filename, int index){
         // A função load_pacman (definida mais acima em board.c)
         // coloca o pacman na posição (1,1), define alive=1 e configura o content='P' no tabuleiro.
         // Passamos 0 pontos porque a main.c vai atualizar os pontos logo a seguir.
-        load_pacman(board, 0);
+        load_pacman(board, points);
 
         return 0; // Sucesso
     }
@@ -488,7 +488,7 @@ int load_pacman_filename(board_t *board, const char* filename, int index){
     
     pacman_t *p = &board->pacmans[index];
     p->alive = 1; 
-    p->points = 0;
+    p->points = points;
 
     while(linha != NULL){
         if(linha[0] != '#'){
@@ -596,7 +596,7 @@ int load_ghost_filename(board_t *board, const char* filename, int index){
 }
 
 
-void processar_entidades(board_t *board, char *linha, int tipo) {
+void processar_entidades(board_t *board, char *linha, int tipo, int points) {
     char temp_name[50];
     int offset = 0;
     int count = 0;
@@ -620,7 +620,7 @@ void processar_entidades(board_t *board, char *linha, int tipo) {
     while (sscanf(cursor, "%s%n", temp_name, &offset) == 1) {
         
         if (tipo == 0) {
-            load_pacman_filename(board, temp_name, i); 
+            load_pacman_filename(board, temp_name, i, points); 
         } else {
             load_ghost_filename(board, temp_name, i);
         }
@@ -630,7 +630,7 @@ void processar_entidades(board_t *board, char *linha, int tipo) {
     }
 }
 
-int load_level_filename(board_t *board, const char *filename) {
+int load_level_filename(board_t *board, const char *filename, int points) { //adicionar pontos, pois 
     char *buffer = read_file_content(filename);
     if (!buffer) return 1;
 
@@ -655,9 +655,9 @@ int load_level_filename(board_t *board, const char *filename) {
                 int t;
                 if (sscanf(linha, "TEMPO %d", &t) == 1) {board->tempo = t; }}
 
-            else if(strncmp(linha, "PAC", 3) == 0){processar_entidades(board, linha, 0);}
+            else if(strncmp(linha, "PAC", 3) == 0){processar_entidades(board, linha, 0, points);}
 
-            else if (strncmp(linha, "MON", 3) == 0) {processar_entidades(board, linha, 1);}
+            else if (strncmp(linha, "MON", 3) == 0) {processar_entidades(board, linha, 1, 0);}
 
             else {
                 if (board->board != NULL && current_row < board->height) {

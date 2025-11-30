@@ -5,15 +5,12 @@
 #include <time.h>
 #include <unistd.h>
 #include <string.h>
-#include <stdio.h>
 
-// Definição de constantes de estado do jogo
 #define CONTINUE_PLAY 0
 #define NEXT_LEVEL 1
 #define QUIT_GAME 2
-
-// Declaração externa da função de carregamento de ficheiros (definida em board.c)
-extern int load_level_filename(board_t *board, const char *filename);
+#define LOAD_BACKUP 3
+#define CREATE_BACKUP 4
 
 void screen_refresh(board_t * game_board, int mode) {
     debug("REFRESH\n");
@@ -26,9 +23,7 @@ void screen_refresh(board_t * game_board, int mode) {
 int play_board(board_t * game_board) {
     pacman_t* pacman = &game_board->pacmans[0];
     command_t* play;
-    
-    // Se não houver movimentos pré-definidos (n_moves == 0), usa input do utilizador
-    if (pacman->n_moves == 0) { 
+    if (pacman->n_moves == 0) { // if is user input
         command_t c; 
         c.command = get_input();
 
@@ -38,8 +33,10 @@ int play_board(board_t * game_board) {
         c.turns = 1;
         play = &c;
     }
-    else { // Caso contrário, usa os movimentos lidos do ficheiro
-        play = &pacman->moves[pacman->current_move % pacman->n_moves];
+    else { // else if the moves are pre-defined in the file
+        // avoid buffer overflow wrapping around with modulo of n_moves
+        // this ensures that we always access a valid move for the pacman
+        play = &pacman->moves[pacman->current_move%pacman->n_moves];
     }
 
     debug("KEY %c\n", play->command);
@@ -50,6 +47,7 @@ int play_board(board_t * game_board) {
 
     int result = move_pacman(game_board, 0, play);
     if (result == REACHED_PORTAL) {
+        // Next level
         return NEXT_LEVEL;
     }
 
@@ -59,7 +57,9 @@ int play_board(board_t * game_board) {
     
     for (int i = 0; i < game_board->n_ghosts; i++) {
         ghost_t* ghost = &game_board->ghosts[i];
-        move_ghost(game_board, i, &ghost->moves[ghost->current_move % ghost->n_moves]);
+        // avoid buffer overflow wrapping around with modulo of n_moves
+        // this ensures that we always access a valid move for the ghost
+        move_ghost(game_board, i, &ghost->moves[ghost->current_move%ghost->n_moves]);
     }
 
     if (!game_board->pacmans[0].alive) {
@@ -69,7 +69,9 @@ int play_board(board_t * game_board) {
     return CONTINUE_PLAY;  
 }
 
-// Função auxiliar para verificar a extensão de um ficheiro
+
+
+// Função auxiliar para verificar a extensão .lvl
 int has_extension(const char *filename, const char *ext) {
     const char *dot = strrchr(filename, '.');
     if (!dot || dot == filename) return 0;
@@ -81,7 +83,7 @@ int compare_levels(const void *a, const void *b) {
     return strcmp((const char *)a, (const char *)b);
 }
 
-// Encontra ficheiros .lvl na diretoria e preenche a lista
+// Preenche a matriz 'lista' com os nomes dos ficheiros e retorna quantos encontrou
 int encontrar_niveis(const char *dirpath, char lista[MAX_LEVELS][MAX_FILENAME]) {
     DIR *dirp = opendir(dirpath);
     if (dirp == NULL) {
@@ -93,12 +95,13 @@ int encontrar_niveis(const char *dirpath, char lista[MAX_LEVELS][MAX_FILENAME]) 
     int count = 0;
 
     while ((dp = readdir(dirp)) != NULL) {
-        // Ignorar entradas "." e ".."
+        // Ignorar . e ..
         if (strcmp(dp->d_name, ".") == 0 || strcmp(dp->d_name, "..") == 0)
             continue;
 
         // Se for .lvl e houver espaço no array
         if (has_extension(dp->d_name, ".lvl") && count < MAX_LEVELS) {
+            // CÓPIA SEGURA DA STRING (A correção do teu erro)
             strncpy(lista[count], dp->d_name, MAX_FILENAME - 1);
             lista[count][MAX_FILENAME - 1] = '\0'; // Garantir null-terminator
             count++;
@@ -110,102 +113,53 @@ int encontrar_niveis(const char *dirpath, char lista[MAX_LEVELS][MAX_FILENAME]) 
 }
 
 int main(int argc, char** argv) {
-    // Validação dos argumentos
-    if (argc != 2) {
+    if (argc != 2) {    
         printf("Usage: %s <level_directory>\n", argv[0]);
-        return 1;
+        // TODO receive inputs
     }
 
-    // Inicialização da seed aleatória
+    // Random seed for any random movements
     srand((unsigned int)time(NULL));
 
-    // Abre o ficheiro de debug antes de mudar de diretoria (para ficar na raiz da execução)
     open_debug_file("debug.log");
-
-    // Muda o processo para a diretoria dos níveis
-    // Isto permite que o código em board.c abra "pacman.p" diretamente sem caminhos absolutos
-    if (chdir(argv[1]) != 0) {
-        perror("Erro ao aceder à diretoria de níveis");
-        close_debug_file();
-        return 1;
-    }
-
-    // Encontra e ordena os níveis
-    char lista_niveis[MAX_LEVELS][MAX_FILENAME];
-    int n_niveis = encontrar_niveis(".", lista_niveis);
-
-    if (n_niveis == 0) {
-        printf("Nenhum nível (.lvl) encontrado na diretoria %s.\n", argv[1]);
-        close_debug_file(); 
-        return 1;
-    }
-
-    qsort(lista_niveis, n_niveis, MAX_FILENAME, compare_levels);
 
     terminal_init();
     
     int accumulated_points = 0;
+    bool end_game = false;
     board_t game_board;
-    // Garante que a estrutura está limpa antes de começar
-    memset(&game_board, 0, sizeof(board_t));
 
-    // Loop principal pelos níveis
-    for (int i = 0; i < n_niveis; i++) {
-        
-        // Carrega o nível atual usando o nome do ficheiro
-        if (load_level_filename(&game_board, lista_niveis[i]) != 0) {
-            debug("Erro ao carregar o nível: %s\n", lista_niveis[i]);
-            break; 
-        }
-
-        // Restaura os pontos acumulados (se houver Pacman)
-        if (game_board.n_pacmans > 0) {
-            game_board.pacmans[0].points = accumulated_points;
-        }
-
-        // Desenha o estado inicial
+    while (!end_game) {
+        load_level(&game_board, accumulated_points);
         draw_board(&game_board, DRAW_MENU);
         refresh_screen();
 
-        int level_result = CONTINUE_PLAY;
-
-        // Loop de jogo do nível atual
         while(true) {
-            level_result = play_board(&game_board); 
+            int result = play_board(&game_board); 
 
-            // Atualiza pontos acumulados para mostrar na UI
-            if (game_board.n_pacmans > 0) {
-                accumulated_points = game_board.pacmans[0].points;
+            if(result == NEXT_LEVEL) {
+                screen_refresh(&game_board, DRAW_WIN);
+                sleep_ms(game_board.tempo);
+                break;
             }
 
-            if(level_result == NEXT_LEVEL || level_result == QUIT_GAME) {
+            if(result == QUIT_GAME) {
+                screen_refresh(&game_board, DRAW_GAME_OVER); 
+                sleep_ms(game_board.tempo);
+                end_game = true;
                 break;
             }
     
             screen_refresh(&game_board, DRAW_MENU); 
-        }
 
-        // Verifica o resultado do nível
-        if (level_result == QUIT_GAME) {
-            screen_refresh(&game_board, DRAW_GAME_OVER); 
-            sleep_ms(2000); // Pausa para ver o Game Over
-            unload_level(&game_board);
-            break; // Sai do loop de níveis
+            accumulated_points = game_board.pacmans[0].points;      
         }
-        else if (level_result == NEXT_LEVEL) {
-            // Se foi o último nível, Vitória
-            if (i == n_niveis - 1) {
-                screen_refresh(&game_board, DRAW_WIN);
-                sleep_ms(2000);
-                unload_level(&game_board);
-                break;
-            }
-            // Se não, descarrega e segue para o próximo (o loop for continua)
-            unload_level(&game_board);
-        }
+        print_board(&game_board);
+        unload_level(&game_board);
     }    
 
     terminal_cleanup();
+
     close_debug_file();
 
     return 0;
