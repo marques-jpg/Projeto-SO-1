@@ -468,9 +468,6 @@ int parse_move_line(char *linha, command_t *moves_array, int *n_moves) {
     char cmd = '\0';
     int turns = 1;
 
-    while(isspace((unsigned char)*linha)) linha++;
-    if (*linha == '\0') return 0;
-
     if (linha[0] == 'T') {
         cmd = 'T';
         if (sscanf(linha + 1, "%d", &turns) != 1) {

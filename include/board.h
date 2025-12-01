@@ -86,6 +86,7 @@ int load_level_filename(board_t *board, const char *filename, int accumulated_po
 /*Unloads levels loaded by load_level*/
 void unload_level(board_t * board);
 
+char* read_file_content(const char* filename);
 // DEBUG FILE
 
 /*Opens the debug file*/
@@ -99,5 +100,15 @@ void debug(const char * format, ...);
 
 /*Writes the board and its contents to the open debug file*/
 void print_board(board_t* board);
+
+int is_valid_pos(board_t *board, int x, int y);
+
+int parse_move_line(char *linha, command_t *moves_array, int *n_moves);
+
+int load_pacman_filename(board_t *board, const char* filename, int index, int points);
+
+int load_ghost_filename(board_t *board, const char* filename, int index);
+
+void processar_entidades(board_t *board, char *linha, int tipo, int points);
 
 #endif
