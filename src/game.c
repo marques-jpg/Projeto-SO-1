@@ -79,7 +79,7 @@ int play_board(board_t * game_board) {
                         waitpid(pid, &status, 0);
 
                         if (WIFEXITED(status)) {
-                            if (WEXITSTATUS(status) == 55) {
+                            if (WEXITSTATUS(status) == 67) {
                                 pid_t new_pid = fork();
                                 if (new_pid == 0) {
                                     break;
@@ -96,6 +96,7 @@ int play_board(board_t * game_board) {
                             exit(1);
                         }
                     }
+                    game_board->save_active = 0;
                     c.command = '\0'; 
                     return CONTINUE_PLAY; 
                 }
@@ -154,7 +155,6 @@ int main(int argc, char** argv) {
     int accumulated_points = 0;
     bool game_over = false;
 
-    // [ALTERAÇÃO 1] Variável para manter o estado do save entre níveis
     int global_save_active = 0;
 
     for (int i = 0; i < n_niveis; i++) {
@@ -162,8 +162,6 @@ int main(int argc, char** argv) {
 
         board_t game_board = {0};
 
-        // [ALTERAÇÃO 2] Inicializa o nível atual com o estado de save global
-        // Se já fizemos 'G' num nível anterior, este nível saberá que é um processo filho
         game_board.save_active = global_save_active;
 
         if (load_level_filename(&game_board, lista_niveis[i], accumulated_points) != 0) {
@@ -180,8 +178,6 @@ int main(int argc, char** argv) {
         while(!level_complete && !game_over) {
             int result = play_board(&game_board); 
 
-            // [ALTERAÇÃO 3] Se o save foi ativado neste nível, atualiza a global
-            // para que os próximos níveis também saibam que estão em modo "save"
             if (game_board.save_active) {
                 global_save_active = 1;
             }
@@ -196,14 +192,11 @@ int main(int argc, char** argv) {
                 sleep_ms(2000);
                 game_over = true;
 
-                // [ALTERAÇÃO 4] Lógica de saída para o processo filho
                 if (game_board.save_active) {
                     if (!game_board.pacmans[0].alive) {
-                        // Pacman morreu: sai com 55 para o Pai restaurar
                         close_debug_file();
-                        exit(55);
+                        exit(67);
                     } else {
-                        // Jogador fez Quit manual: sai com 0 para terminar tudo
                         terminal_cleanup();
                         close_debug_file();
                         exit(0);
