@@ -18,7 +18,7 @@ int terminal_init() {
     keypad(stdscr, TRUE);
 
     // Make getch() non-blocking (return ERR if no input)
-    // nodelay(stdscr, TRUE); // Uncomment if non-blocking input is desired
+    nodelay(stdscr, TRUE); // <--- CORRIGIDO: Linha descomentada para permitir execução contínua
 
     // Hide the cursor
     curs_set(0);
@@ -178,4 +178,4 @@ char get_input() {
 void terminal_cleanup() {
     // Restore terminal settings and clean up ncurses
     endwin();
-}
+}   

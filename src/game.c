@@ -176,7 +176,9 @@ static void *ghost_thread(void *arg) {
             continue;
         }
 
-        command_t cmd = ghost->moves[ghost->current_move % ghost->n_moves];
+        // CORREÇÃO: Calcular o índice do comando em vez de fazer uma cópia da estrutura
+        int cmd_index = ghost->current_move % ghost->n_moves;
+        
         pthread_mutex_unlock(&state->mutex);
 
         pthread_mutex_lock(&state->mutex);
@@ -184,7 +186,14 @@ static void *ghost_thread(void *arg) {
             pthread_mutex_unlock(&state->mutex);
             break;
         }
-        int result = move_ghost(board, ghost_index, &cmd);
+
+        // CORREÇÃO: Obter um ponteiro para o comando real dentro do array
+        // Isto garante que quando o move_ghost altera o 'turns_left', a alteração fica guardada.
+        ghost = &board->ghosts[ghost_index];
+        command_t *cmd_ptr = &ghost->moves[cmd_index];
+
+        int result = move_ghost(board, ghost_index, cmd_ptr);
+        
         if (result == DEAD_PACMAN) {
             set_outcome(state, QUIT_GAME);
         }
