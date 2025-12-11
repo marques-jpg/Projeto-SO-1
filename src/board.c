@@ -35,7 +35,6 @@ static inline int is_valid_position(board_t* board, int x, int y) {
 }
 
 static void find_first_free_pos(board_t* board, int* x, int* y) {
-    // Procura por uma posição que não seja Parede ('W') e não seja Portal.
     for (int row = 0; row < board->height; row++) {
         for (int col = 0; col < board->width; col++) {
             int index = get_board_index(board, col, row);

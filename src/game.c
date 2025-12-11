@@ -89,6 +89,8 @@ static void *pacman_thread(void *arg) {
     game_state_t *state = (game_state_t *)arg;
     board_t *board = state->board;
 
+    command_t manual_cmd; 
+
     while (1) {
         pthread_mutex_lock(&state->mutex);
         if (!state->running) {
@@ -97,7 +99,7 @@ static void *pacman_thread(void *arg) {
         }
 
         pacman_t *pacman = &board->pacmans[0];
-        command_t cmd;
+        command_t *cmd_ptr;
 
         if (pacman->n_moves == 0) {
             while (state->pending_input == '\0' && state->running) {
@@ -107,27 +109,29 @@ static void *pacman_thread(void *arg) {
                 pthread_mutex_unlock(&state->mutex);
                 break;
             }
-            cmd = build_manual_command(state->pending_input);
+            manual_cmd = build_manual_command(state->pending_input);
             state->pending_input = '\0';
+            cmd_ptr = &manual_cmd;
         } else {
-            cmd = pacman->moves[pacman->current_move % pacman->n_moves];
+            int cmd_index = pacman->current_move % pacman->n_moves;
+            cmd_ptr = &pacman->moves[cmd_index];
         }
 
         pthread_mutex_unlock(&state->mutex);
 
-        if (cmd.command == 'Q') {
+        if (cmd_ptr->command == 'Q') {
             pthread_mutex_lock(&state->mutex);
             set_outcome(state, QUIT_GAME);
             pthread_mutex_unlock(&state->mutex);
             continue;
         }
 
-        if (cmd.command == 'G') {
+        if (cmd_ptr->command == 'G') {
             pthread_mutex_lock(&state->mutex);
             if (board->save_active == 0) {
                 board->save_active = 1;
                 state->save_request = 1;
-                set_outcome(state, CONTINUE_PLAY); // signal threads to stop so main can fork
+                set_outcome(state, CONTINUE_PLAY);
             }
             pthread_mutex_unlock(&state->mutex);
             continue;
@@ -138,7 +142,9 @@ static void *pacman_thread(void *arg) {
             pthread_mutex_unlock(&state->mutex);
             break;
         }
-        int result = move_pacman(board, 0, &cmd);
+        
+        int result = move_pacman(board, 0, cmd_ptr); 
+        
         if (result == REACHED_PORTAL) {
             set_outcome(state, NEXT_LEVEL);
         } else if (result == DEAD_PACMAN) {
@@ -382,7 +388,7 @@ int main(int argc, char** argv) {
 
         accumulated_points = game_board.pacmans[0].points;      
         unload_level(&game_board);
-    }    
+    }
 
     terminal_cleanup();
     close_debug_file();
