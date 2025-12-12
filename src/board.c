@@ -7,10 +7,11 @@
 #include <fcntl.h>
 #include <ctype.h>
 #include <string.h>
-#include <pthread.h> // [NOVO] Necessário para os trincos
+#include <pthread.h>
 
 FILE * debugfile;
 
+// Locks two board positions in a specific order to avoid deadlocks
 static void lock_two_positions(board_t* board, int idx1, int idx2) {
     if (idx1 == idx2) {
         pthread_mutex_lock(&board->board[idx1].mutex);
@@ -24,7 +25,7 @@ static void lock_two_positions(board_t* board, int idx1, int idx2) {
     pthread_mutex_lock(&board->board[second].mutex);
 }
 
-/* Destranca duas posições do tabuleiro */
+// Unlocks two previously locked board positions
 static void unlock_two_positions(board_t* board, int idx1, int idx2) {
     pthread_mutex_unlock(&board->board[idx1].mutex);
     if (idx1 != idx2) {
@@ -32,10 +33,7 @@ static void unlock_two_positions(board_t* board, int idx1, int idx2) {
     }
 }
 
-// -----------------------------------------------------------
-
-// Helper private function to find and kill pacman at specific position
-// NOTA: Esta função assume que quem a chama JÁ TEM o trinco da posição (new_x, new_y)
+// Checks if a Pacman exists at the given coordinates and kills it if found
 static int find_and_kill_pacman(board_t* board, int new_x, int new_y) {
     for (int p = 0; p < board->n_pacmans; p++) {
         pacman_t* pac = &board->pacmans[p];
@@ -48,16 +46,17 @@ static int find_and_kill_pacman(board_t* board, int new_x, int new_y) {
     return VALID_MOVE;
 }
 
-// Helper private function for getting board position index
+// Helper function to calculate the 1D array index from 2D coordinates
 static inline int get_board_index(board_t* board, int x, int y) {
     return y * board->width + x;
 }
 
-// Helper private function for checking valid position
+// Helper function to check if coordinates are within the board boundaries
 static inline int is_valid_position(board_t* board, int x, int y) {
     return (x >= 0 && x < board->width) && (y >= 0 && y < board->height);
 }
 
+// Finds the first position on the board that is not a wall or a portal
 static void find_first_free_pos(board_t* board, int* x, int* y) {
     for (int row = 0; row < board->height; row++) {
         for (int col = 0; col < board->width; col++) {
@@ -74,6 +73,7 @@ static void find_first_free_pos(board_t* board, int* x, int* y) {
     }
 }
 
+// Makes the current thread sleep for the specified number of milliseconds
 void sleep_ms(int milliseconds) {
     struct timespec ts;
     ts.tv_sec = milliseconds / 1000;
@@ -81,14 +81,9 @@ void sleep_ms(int milliseconds) {
     nanosleep(&ts, NULL);
 }
 
+// Handles the movement logic for a Pacman, including collisions and point collection
 int move_pacman(board_t* board, int pacman_index, command_t* command) {
-    // Verificações preliminares (sem lock, dados read-only ou thread-local)
     if (pacman_index < 0) return DEAD_PACMAN;
-    
-    // Precisamos de aceder ao pacman, mas cuidado com data races se outro thread o matar.
-    // No entanto, normalmente só o thread do pacman mexe na struct pacman,
-    // exceto o campo 'alive' que pode ser alterado por fantasmas.
-    // Vamos assumir que se estiver morto, o loop principal deteta.
     
     pacman_t* pac = &board->pacmans[pacman_index];
     if (!pac->alive) return DEAD_PACMAN;
@@ -98,7 +93,6 @@ int move_pacman(board_t* board, int pacman_index, command_t* command) {
     int new_x = current_x;
     int new_y = current_y;
 
-    // check passo
     if (pac->waiting > 0) {
         pac->waiting -= 1;
         return VALID_MOVE;        
@@ -112,13 +106,12 @@ int move_pacman(board_t* board, int pacman_index, command_t* command) {
         direction = directions[rand() % 4];
     }
 
-    // Calculate new position based on direction
     switch (direction) {
         case 'W': new_y--; break;
         case 'S': new_y++; break;
         case 'A': new_x--; break;
         case 'D': new_x++; break;
-        case 'T': // Wait
+        case 'T':
             if (command->turns_left == 1) {
                 pac->current_move += 1;
                 command->turns_left = command->turns;
@@ -131,7 +124,6 @@ int move_pacman(board_t* board, int pacman_index, command_t* command) {
 
     pac->current_move += 1;
 
-    // Check boundaries (read-only info, safe)
     if (!is_valid_position(board, new_x, new_y)) {
         return INVALID_MOVE;
     }
@@ -139,11 +131,8 @@ int move_pacman(board_t* board, int pacman_index, command_t* command) {
     int old_index = get_board_index(board, current_x, current_y);
     int new_index = get_board_index(board, new_x, new_y);
 
-    // [NOVO] INICIO SECÇÃO CRÍTICA (Lock 2 posições)
     lock_two_positions(board, old_index, new_index);
 
-    // Validar se o pacman ainda está vivo e na posição que achamos que está
-    // (pode ter morrido enquanto esperava pelo lock)
     if (!pac->alive || pac->pos_x != current_x || pac->pos_y != current_y) {
         unlock_two_positions(board, old_index, new_index);
         return DEAD_PACMAN;
@@ -161,13 +150,10 @@ int move_pacman(board_t* board, int pacman_index, command_t* command) {
         ret_val = INVALID_MOVE;
     }
     else if (target_content == 'M') {
-        // Pacman chocou com um monstro -> Morre
-        // kill_pacman limpa a posição do pacman (old_index), e temos lock sobre ela. OK.
         kill_pacman(board, pacman_index);
         ret_val = DEAD_PACMAN;
     }
     else {
-        // Espaço livre ou pontos
         if (board->board[new_index].has_dot) {
             pac->points++;
             board->board[new_index].has_dot = 0;
@@ -180,19 +166,18 @@ int move_pacman(board_t* board, int pacman_index, command_t* command) {
     }
 
     unlock_two_positions(board, old_index, new_index);
-    // [NOVO] FIM SECÇÃO CRÍTICA
 
     return ret_val;
 }
 
-
+// Calculates the final destination for a 'charged' move (straight line until obstacle)
 static int get_charged_dest(board_t* board, int x, int y, char direction, int* dest_x, int* dest_y) {
     *dest_x = x;
     *dest_y = y;
     
     switch (direction) {
-        case 'W': // Up
-            if (y == 0) return 0; // Invalid move implícito
+        case 'W':
+            if (y == 0) return 0;
             *dest_y = 0; 
             for (int i = y - 1; i >= 0; i--) {
                 char c = board->board[get_board_index(board, x, i)].content;
@@ -200,7 +185,7 @@ static int get_charged_dest(board_t* board, int x, int y, char direction, int* d
                 if (c == 'P') { *dest_y = i; return 1; }
             }
             break;
-        case 'S': // Down
+        case 'S':
             if (y == board->height - 1) return 0;
             *dest_y = board->height - 1;
             for (int i = y + 1; i < board->height; i++) {
@@ -209,7 +194,7 @@ static int get_charged_dest(board_t* board, int x, int y, char direction, int* d
                 if (c == 'P') { *dest_y = i; return 1; }
             }
             break;
-        case 'A': // Left
+        case 'A':
             if (x == 0) return 0;
             *dest_x = 0;
             for (int j = x - 1; j >= 0; j--) {
@@ -218,7 +203,7 @@ static int get_charged_dest(board_t* board, int x, int y, char direction, int* d
                 if (c == 'P') { *dest_x = j; return 1; }
             }
             break;
-        case 'D': // Right
+        case 'D':
             if (x == board->width - 1) return 0;
             *dest_x = board->width - 1;
             for (int j = x + 1; j < board->width; j++) {
@@ -231,19 +216,18 @@ static int get_charged_dest(board_t* board, int x, int y, char direction, int* d
     return 0;
 }   
 
+// Executes the movement logic for a ghost in 'charged' state
 int move_ghost_charged(board_t* board, int ghost_index, char direction) {
     ghost_t* ghost = &board->ghosts[ghost_index];
     int cur_x = ghost->pos_x;
     int cur_y = ghost->pos_y;
     int new_x, new_y;
 
-    ghost->charged = 0; // uncharge
+    ghost->charged = 0;
 
-    // 1. Calcular destino (sem modificar board)
     get_charged_dest(board, cur_x, cur_y, direction, &new_x, &new_y);
 
     if (cur_x == new_x && cur_y == new_y) {
-        // Não se moveu (bloqueado logo no inicio)
         debug("DEFAULT CHARGED MOVE BLOCKED - direction = %c\n", direction);
         return INVALID_MOVE;
     }
@@ -251,10 +235,8 @@ int move_ghost_charged(board_t* board, int ghost_index, char direction) {
     int old_index = get_board_index(board, cur_x, cur_y);
     int new_index = get_board_index(board, new_x, new_y);
 
-    // 2. Trancar Origem e Destino
     lock_two_positions(board, old_index, new_index);
 
-    // Validar se o fantasma ainda está na origem (segurança)
     if (ghost->pos_x != cur_x || ghost->pos_y != cur_y) {
          unlock_two_positions(board, old_index, new_index);
          return INVALID_MOVE;
@@ -266,13 +248,11 @@ int move_ghost_charged(board_t* board, int ghost_index, char direction) {
     if (target_content == 'P') {
         result = find_and_kill_pacman(board, new_x, new_y);
     } 
-    // Se entretanto apareceu uma parede ou outro monstro no destino (race condition no scan)
     else if (target_content == 'W' || target_content == 'M') {
         unlock_two_positions(board, old_index, new_index);
         return INVALID_MOVE;
     }
 
-    // Mover Fantasma
     board->board[old_index].content = ' '; 
     ghost->pos_x = new_x;
     ghost->pos_y = new_y;
@@ -282,6 +262,7 @@ int move_ghost_charged(board_t* board, int ghost_index, char direction) {
     return result;
 }
 
+// Executes a standard move command for a ghost
 int move_ghost(board_t* board, int ghost_index, command_t* command) {
     ghost_t* ghost = &board->ghosts[ghost_index];
     int current_x = ghost->pos_x;
@@ -289,7 +270,6 @@ int move_ghost(board_t* board, int ghost_index, command_t* command) {
     int new_x = current_x;
     int new_y = current_y;
 
-    // check passo
     if (ghost->waiting > 0) {
         ghost->waiting -= 1;
         return VALID_MOVE;
@@ -303,17 +283,16 @@ int move_ghost(board_t* board, int ghost_index, command_t* command) {
         direction = directions[rand() % 4];
     }
 
-    // Calculate new position based on direction
     switch (direction) {
         case 'W': new_y--; break;
         case 'S': new_y++; break;
         case 'A': new_x--; break;
         case 'D': new_x++; break;
-        case 'C': // Charge
+        case 'C':
             ghost->current_move += 1;
             ghost->charged = 1;
-            return VALID_MOVE; // Alteração de estado local, não mexe no tabuleiro
-        case 'T': // Wait
+            return VALID_MOVE;
+        case 'T':
             if (command->turns_left == 1) {
                 ghost->current_move += 1; 
                 command->turns_left = command->turns;
@@ -324,14 +303,11 @@ int move_ghost(board_t* board, int ghost_index, command_t* command) {
             return INVALID_MOVE;
     }
 
-    // Logic for the WASD movement
     ghost->current_move++;
     
-    // Se estiver carregado, usamos a função específica
     if (ghost->charged)
         return move_ghost_charged(board, ghost_index, direction);
 
-    // Check boundaries
     if (!is_valid_position(board, new_x, new_y)) {
         return INVALID_MOVE;
     }
@@ -339,10 +315,8 @@ int move_ghost(board_t* board, int ghost_index, command_t* command) {
     int old_index = get_board_index(board, current_x, current_y);
     int new_index = get_board_index(board, new_x, new_y);
 
-    // [NOVO] Trancar posições
     lock_two_positions(board, old_index, new_index);
 
-    // Validar consistência
     if (ghost->pos_x != current_x || ghost->pos_y != current_y) {
         unlock_two_positions(board, old_index, new_index);
         return INVALID_MOVE;
@@ -350,19 +324,16 @@ int move_ghost(board_t* board, int ghost_index, command_t* command) {
 
     char target_content = board->board[new_index].content;
 
-    // Check for walls and ghosts
     if (target_content == 'W' || target_content == 'M') {
         unlock_two_positions(board, old_index, new_index);
         return INVALID_MOVE;
     }
 
     int result = VALID_MOVE;
-    // Check for pacman
     if (target_content == 'P') {
         result = find_and_kill_pacman(board, new_x, new_y);
     }
 
-    // Update board
     board->board[old_index].content = ' '; 
     ghost->pos_x = new_x;
     ghost->pos_y = new_y;
@@ -372,18 +343,17 @@ int move_ghost(board_t* board, int ghost_index, command_t* command) {
     return result;
 }
 
+// Sets the specified Pacman as dead and removes it from the board
 void kill_pacman(board_t* board, int pacman_index) {
     debug("Killing %d pacman\n\n", pacman_index);
     pacman_t* pac = &board->pacmans[pacman_index];
     int index = pac->pos_y * board->width + pac->pos_x;
 
-    // NOTA: kill_pacman é chamada por funções que já detêm o lock da posição (index)
-    // Portanto, é seguro escrever.
     board->board[index].content = ' ';
     pac->alive = 0;
 }
 
-// Static Loading
+// Initializes the Pacman structure (used for static loading)
 int load_pacman(board_t* board, int points) {
     board->pacmans[0].pos_x = -1;
     board->pacmans[0].pos_y = -1;
@@ -392,9 +362,8 @@ int load_pacman(board_t* board, int points) {
     return 0;
 }
 
-// Static Loading
+// Initializes Ghost structures with predefined moves (used for static loading)
 int load_ghost(board_t* board) {
-    // Ghost 0
     board->board[3 * board->width + 1].content = 'M'; 
     board->ghosts[0].pos_x = 1;
     board->ghosts[0].pos_y = 3;
@@ -411,7 +380,6 @@ int load_ghost(board_t* board) {
         board->ghosts[0].moves[i].turns = 1; 
     }
 
-    // Ghost 1
     board->board[2 * board->width + 4].content = 'M';
     board->ghosts[1].pos_x = 4;
     board->ghosts[1].pos_y = 2;
@@ -419,12 +387,13 @@ int load_ghost(board_t* board) {
     board->ghosts[1].waiting = 1;
     board->ghosts[1].current_move = 0;
     board->ghosts[1].n_moves = 1;
-    board->ghosts[1].moves[0].command = 'R'; // Random
+    board->ghosts[1].moves[0].command = 'R';
     board->ghosts[1].moves[0].turns = 1; 
     
     return 0;
 }
 
+// Loads a default static level into the board
 int load_level(board_t *board, int points) {
     board->height = 5;
     board->width = 10;
@@ -435,7 +404,6 @@ int load_level(board_t *board, int points) {
 
     board->board = calloc(board->width * board->height, sizeof(board_pos_t));
     
-    // [NOVO] Inicializar mutexes
     for(int i = 0; i < board->width * board->height; i++) {
         pthread_mutex_init(&board->board[i].mutex, NULL);
     }
@@ -467,6 +435,7 @@ int load_level(board_t *board, int points) {
     return 0;
 }
 
+// Reads the full content of a file into a dynamically allocated string
 char* read_file_content(const char* filename) {
     int fd = open(filename, O_RDONLY);
     if (fd < 0) return NULL; 
@@ -482,6 +451,7 @@ char* read_file_content(const char* filename) {
     return buffer;
 }
 
+// Checks if a position on the board is valid for placing an entity
 int is_valid_pos(board_t *board, int x, int y) {
     if (!board || !board->board) return 0;
     if (!is_valid_position(board, x, y)) return 0;
@@ -491,6 +461,7 @@ int is_valid_pos(board_t *board, int x, int y) {
     return 1;
 }
     
+// Parses a single line from a file into a move command structure
 int parse_move_line(char *linha, command_t *moves_array, int *n_moves) {
     if (*n_moves >= MAX_MOVES) return 0;
 
@@ -517,6 +488,7 @@ int parse_move_line(char *linha, command_t *moves_array, int *n_moves) {
     return 0;
 }
 
+// Loads entity (Pacman/Ghost) configuration from a file
 int load_entity_file(board_t *board, const char* filename, int index, int is_pacman, int points) {
     char *buffer = read_file_content(filename);
 
@@ -597,7 +569,8 @@ int load_entity_file(board_t *board, const char* filename, int index, int is_pac
     return 0;
 }
 
-void processar_entidades(board_t *board, char *linha, int tipo, int points) {
+// Parses lines from the level file that specify entity files (PAC/MON)
+void process_entities(board_t *board, char *linha, int tipo, int points) {
     char temp_name[50];
     int offset = 0;
     int count = 0;
@@ -625,6 +598,7 @@ void processar_entidades(board_t *board, char *linha, int tipo, int points) {
     }
 }
 
+// Loads the level configuration and map from a filename
 int load_level_filename(board_t *board, const char *filename, int points) {
     char *buffer = read_file_content(filename);
     if (!buffer) return 1;
@@ -642,7 +616,6 @@ int load_level_filename(board_t *board, const char *filename, int points) {
                     board->width = w;
                     board->board = calloc(board->width * board->height, sizeof(board_pos_t));
                     
-                    // [NOVO] Inicializar mutexes
                     for(int i = 0; i < board->width * board->height; i++) {
                         pthread_mutex_init(&board->board[i].mutex, NULL);
                     }
@@ -652,8 +625,8 @@ int load_level_filename(board_t *board, const char *filename, int points) {
                 int t;
                 if (sscanf(linha, "TEMPO %d", &t) == 1) board->tempo = t; 
             }
-            else if(strncmp(linha, "PAC", 3) == 0) processar_entidades(board, linha, 0, points);
-            else if (strncmp(linha, "MON", 3) == 0) processar_entidades(board, linha, 1, 0);
+            else if(strncmp(linha, "PAC", 3) == 0) process_entities(board, linha, 0, points);
+            else if (strncmp(linha, "MON", 3) == 0) process_entities(board, linha, 1, 0);
             else {
                 if (board->board != NULL && current_row < board->height) {
                     for (int x = 0; x < board->width && linha[x] != '\0'; x++) {
@@ -696,8 +669,8 @@ int load_level_filename(board_t *board, const char *filename, int points) {
     return 0;
 }
 
+// Frees all allocated memory for the level and destroys mutexes
 void unload_level(board_t * board) {
-    // [NOVO] Destruir mutexes antes de libertar
     if (board->board) {
         for(int i = 0; i < board->width * board->height; i++) {
             pthread_mutex_destroy(&board->board[i].mutex);
@@ -708,14 +681,17 @@ void unload_level(board_t * board) {
     free(board->ghosts);
 }
 
+// Opens the debug log file for writing
 void open_debug_file(char *filename) {
     debugfile = fopen(filename, "w");
 }
 
+// Closes the debug log file
 void close_debug_file() {
     fclose(debugfile);
 }
 
+// Writes formatted output to the debug log file
 void debug(const char * format, ...) {
     va_list args;
     va_start(args, format);
@@ -724,6 +700,7 @@ void debug(const char * format, ...) {
     fflush(debugfile);
 }
 
+// Prints the current state of the board and entities to the debug log
 void print_board(board_t *board) {
     if (!board || !board->board) {
         debug("[%d] Board is empty or not initialized.\n", getpid());
